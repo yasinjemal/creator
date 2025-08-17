@@ -1,0 +1,82 @@
+name: Publish validation smoke test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  publish-smoke:
+    runs-on: ubuntu-latest
+    services:
+      docker:
+        image: docker:24.0.5
+        options: --privileged
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Compose
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y docker-compose-plugin
+
+      - name: Build and bring up services
+        run: |
+          cd infra
+          docker compose up -d --build
+
+      - name: Wait for services (hardened)
+        run: |
+          set -e
+          cd infra
+          echo 'Waiting for redis...'
+          for i in $(seq 1 30); do
+            if docker compose exec -T redis redis-cli PING >/dev/null 2>&1; then
+              echo 'redis ready'; break
+            fi
+            sleep 1
+          done
+          echo 'Waiting for mongo...'
+          for i in $(seq 1 30); do
+            if docker compose exec -T mongo mongo --eval "db.adminCommand('ping')" >/dev/null 2>&1; then
+              echo 'mongo ready'; break
+            fi
+            sleep 1
+          done
+          echo 'Waiting for backend HTTP...'
+          for i in $(seq 1 30); do
+            if docker compose exec -T backend python -c "import socket; s=socket.socket(); s.settimeout(1); s.connect(('127.0.0.1',8000)); s.close()" >/dev/null 2>&1; then
+              echo 'backend listening'; break
+            fi
+            sleep 1
+          done
+
+      - name: Run publish validation smoke test
+        run: |
+          cd infra
+          docker compose exec -T backend python -m pytest -q /app/tests/test_publish_validation.py
+
+      - name: Dump logs & diagnostics (always)
+        if: always()
+        run: |
+          set -e
+          cd infra
+          docker compose logs backend > backend-logs.txt || true
+          docker compose exec -T redis redis-cli INFO > redis-info.txt || echo 'redis-info failed' > redis-info.txt
+
+      - name: Upload logs & diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-smoke-failure-artifacts
+          path: |
+            infra/backend-logs.txt
+            infra/redis-info.txt
+
+      - name: Tear down
+        if: always()
+        run: |
+          cd infra
+          docker compose down -v

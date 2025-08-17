@@ -1,0 +1,104 @@
+version: '3.8'
+services:
+  backend:
+    build: ../backend
+    command: python app.py
+    volumes:
+      - ../backend:/app
+    env_file:
+      - ../.env
+    secrets:
+      - encryption_key
+    # map container port 8000 to a high, unprivileged host port to avoid Windows binding issues
+    ports:
+      - "18000:8000"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/creatorflow
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+    depends_on:
+      - mongo
+      - redis
+
+  frontend:
+    image: node:18
+    working_dir: /app
+    volumes:
+      - ../frontend:/app
+    ports:
+      - "3000:3000"
+    command: sh -c "npm install && npm run dev"
+    depends_on:
+      - backend
+
+  mongo:
+    image: mongo:6
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  worker:
+    build: ../backend
+    command: python worker.py
+    volumes:
+      - ../backend:/app
+    env_file:
+      - ../.env
+    secrets:
+      - encryption_key
+    depends_on:
+      - redis
+      - backend
+
+  scheduler:
+    build: ../backend
+    command: python scheduler.py
+    volumes:
+      - ../backend:/app
+    env_file:
+      - ../.env
+    secrets:
+      - encryption_key
+    environment:
+      - ENABLE_PERIODIC_CLEANUP_ENQUEUER=1
+      - TEMP_CLEANUP_INTERVAL_SECONDS=3600
+      - SCHEDULER_HEALTH_TTL=1200
+    depends_on:
+      - redis
+      - backend
+    healthcheck:
+      test: ["CMD", "python", "/app/scheduler_healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  token_refresher:
+    build: ../backend
+    command: python token_refresher.py
+    volumes:
+      - ../backend:/app
+    env_file:
+      - ../.env
+    secrets:
+      - encryption_key
+    environment:
+      - REFRESH_INTERVAL_SECONDS=60
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+    depends_on:
+      - redis
+      - backend
+
+volumes:
+  mongo-data:
+    
+secrets:
+  encryption_key:
+    file: ../infra/encryption_key
+

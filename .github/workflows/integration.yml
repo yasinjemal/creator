@@ -1,0 +1,218 @@
+name: Integration tests (docker-compose)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      docker:
+        image: docker:24.0.5
+        options: --privileged
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Compose
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y docker-compose-plugin
+
+      - name: Build and bring up services
+        run: |
+          cd infra
+          docker compose up -d --build
+
+      - name: Wait for services (hardened)
+        run: |
+          set -e
+          cd infra
+          # wait up to 60s for redis
+          echo 'Waiting for redis...'
+          for i in $(seq 1 60); do
+            if docker compose exec -T redis redis-cli PING >/dev/null 2>&1; then
+              echo 'redis ready'; break
+            fi
+            sleep 1
+          done
+          # wait up to 60s for mongo
+          echo 'Waiting for mongo...'
+          for i in $(seq 1 60); do
+            if docker compose exec -T mongo mongo --eval "db.adminCommand('ping')" >/dev/null 2>&1; then
+              echo 'mongo ready'; break
+            fi
+            sleep 1
+          done
+          # ensure backend has started and is listening
+          echo 'Waiting for backend HTTP...'
+          for i in $(seq 1 60); do
+            if docker compose exec -T backend python -c "import socket; s=socket.socket();
+              s.settimeout(1); s.connect(('127.0.0.1',8000)); s.close()" >/dev/null 2>&1; then
+              echo 'backend listening'; break
+            fi
+            sleep 1
+          done
+
+      - name: Run integration test (inside backend container)
+        env:
+          RUN_INTEGRATION_TESTS: '1'
+        run: |
+          cd infra
+          docker compose exec -T backend python -m pytest /app/tests/test_admin_audit_integration.py -q
+
+      - name: Run publish validation smoke test (inside backend container)
+        run: |
+          cd infra
+          docker compose exec -T backend python -m pytest -q /app/tests/test_publish_validation.py
+
+      - name: Dump logs & diagnostics (always)
+        if: always()
+        run: |
+          set -e
+          cd infra
+          echo 'Dumping worker logs...'
+          docker compose logs worker > worker-logs.txt || true
+          echo 'Dumping backend logs...'
+          docker compose logs backend > backend-logs.txt || true
+          echo 'Dumping token_refresher logs...'
+          docker compose logs token_refresher > token_refresher-logs.txt || true
+          echo 'Collecting redis INFO...'
+          docker compose exec -T redis redis-cli INFO > redis-info.txt || echo 'redis-info failed' > redis-info.txt
+          echo 'Collecting mongo serverStatus and current DBs...'
+          docker compose exec -T mongo mongo --quiet --eval "printjson(db.adminCommand('serverStatus'))" > mongo-server-status.txt || echo 'mongo-server-status failed' > mongo-server-status.txt
+          docker compose exec -T mongo mongo --quiet --eval "printjson(db.getMongo().getDBs())" > mongo-dbs.txt || echo 'mongo-dbs failed' > mongo-dbs.txt
+
+          echo 'Saving docker ps and compose ps output...'
+          docker ps -a > docker-ps.txt || true
+          docker compose ps > docker-compose-ps.txt || true
+
+          echo 'Inspecting service containers...'
+          # Inspect all containers launched by compose
+          for cid in $(docker compose ps -q); do
+            short=$(echo $cid | cut -c1-12)
+            docker inspect $cid > inspect_${short}.json || true
+          done
+          # Also inspect known service containers by name (if present)
+          docker inspect $(docker compose ps -q backend) > backend-inspect.json 2>/dev/null || true
+          docker inspect $(docker compose ps -q worker) > worker-inspect.json 2>/dev/null || true
+          docker inspect $(docker compose ps -q token_refresher) > token_refresher-inspect.json 2>/dev/null || true
+          docker inspect $(docker compose ps -q redis) > redis-inspect.json 2>/dev/null || true
+          docker inspect $(docker compose ps -q mongo) > mongo-inspect.json 2>/dev/null || true
+
+      - name: Upload logs & diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-failure-artifacts
+          path: |
+            infra/worker-logs.txt
+            infra/backend-logs.txt
+            infra/token_refresher-logs.txt
+            infra/redis-info.txt
+            infra/mongo-server-status.txt
+            infra/mongo-dbs.txt
+            infra/docker-ps.txt
+            infra/docker-compose-ps.txt
+            infra/*inspect*.json
+
+      - name: Tear down
+        if: always()
+        run: |
+          cd infra
+          docker compose down -v
+
+  publish-smoke:
+    name: Publish validation smoke test
+    runs-on: ubuntu-latest
+    services:
+      docker:
+        image: docker:24.0.5
+        options: --privileged
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Compose
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y docker-compose-plugin
+
+      - name: Build and bring up services (smoke)
+        run: |
+          cd infra
+          docker compose up -d --build
+
+      - name: Wait for services (smoke - hardened)
+        run: |
+          set -e
+          cd infra
+          # wait up to 30s for redis
+          echo 'Waiting for redis...'
+          for i in $(seq 1 30); do
+            if docker compose exec -T redis redis-cli PING >/dev/null 2>&1; then
+              echo 'redis ready'; break
+            fi
+            sleep 1
+          done
+          # wait up to 30s for mongo
+          echo 'Waiting for mongo...'
+          for i in $(seq 1 30); do
+            if docker compose exec -T mongo mongo --eval "db.adminCommand('ping')" >/dev/null 2>&1; then
+              echo 'mongo ready'; break
+            fi
+            sleep 1
+          done
+          # ensure backend has started and is listening
+          echo 'Waiting for backend HTTP...'
+          for i in $(seq 1 30); do
+            if docker compose exec -T backend python -c "import socket; s=socket.socket();
+              s.settimeout(1); s.connect(('127.0.0.1',8000)); s.close()" >/dev/null 2>&1; then
+              echo 'backend listening'; break
+            fi
+            sleep 1
+          done
+
+      - name: Run publish validation smoke test (inside backend container)
+        run: |
+          cd infra
+          docker compose exec -T backend python -m pytest -q /app/tests/test_publish_validation.py
+
+      - name: Dump logs & diagnostics (always - smoke)
+        if: always()
+        run: |
+          set -e
+          cd infra
+          echo 'Dumping backend logs...'
+          docker compose logs backend > backend-logs.txt || true
+          echo 'Collecting redis INFO...'
+          docker compose exec -T redis redis-cli INFO > redis-info.txt || echo 'redis-info failed' > redis-info.txt
+
+      - name: Upload logs & diagnostics on failure (smoke)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-smoke-failure-artifacts
+          path: |
+            infra/backend-logs.txt
+            infra/redis-info.txt
+
+      - name: Tear down (smoke)
+        if: always()
+        run: |
+          cd infra
+          docker compose down -v
+
+      - name: Cancel entire workflow run on smoke failure
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Cancelling workflow run ${GITHUB_RUN_ID} due to publish-smoke failure"
+          curl -sSf -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel" || true

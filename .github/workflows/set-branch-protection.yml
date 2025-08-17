@@ -1,0 +1,32 @@
+name: Set branch protection (optional admin)
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        required: true
+        default: main
+        description: Branch to protect
+
+jobs:
+  set-protection:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set branch protection via GitHub API
+        env:
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.inputs.branch }}
+          PAT: ${{ secrets.PROTECTION_PAT }}
+        run: |
+          if [ -z "$PAT" ]; then
+            echo "Please set the PROTECTION_PAT secret with a repo-scoped PAT that can update branch protection.";
+            exit 1;
+          fi
+          OWNER=$(echo "$REPO" | cut -d'/' -f1)
+          NAME=$(echo "$REPO" | cut -d'/' -f2)
+          echo "Setting required status checks for branch $BRANCH in $REPO"
+          curl -sSf -X PUT \
+            -H "Authorization: token $PAT" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$OWNER/$NAME/branches/$BRANCH/protection" \
+            -d '{"required_status_checks":{"strict":true,"contexts":["Publish validation smoke test"]},"enforce_admins":false,"required_pull_request_reviews":null,"restrictions":null}'

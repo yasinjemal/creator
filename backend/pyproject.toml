@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "creatorflow-backend"
+version = "0.1.0"
+description = "CreatorFlow backend (Flask)"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+flask = "^2.3"
+pymongo = "^4.6"
+redis = "^4.5"
+python-dotenv = "^1.0"
+requests = "^2.31"
+pillow = "^10.0"
+# placeholders for ML/AI libs
+numpy = "^1.27"
+scikit-learn = "^1.3"
+
+[tool.poetry.dev-dependencies]
+pytest = "^8.4"
+
+[build-system]
+requires = ["poetry-core>=1.5.0"]
+build-backend = "poetry.core.masonry.api"

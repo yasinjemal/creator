@@ -1,0 +1,13 @@
+Flask==2.3.3
+pymongo==4.6.0
+redis==4.5.5
+python-dotenv==1.0.0
+pillow==10.0.0
+requests==2.31.0
+# Use numpy compatible with Python 3.11 manylinux wheels
+numpy==1.26.4
+# pin scikit-learn to stable matching numpy
+scikit-learn==1.2.2
+pytest==8.4.0
+rq==1.12.0
+cryptography==41.0.3
