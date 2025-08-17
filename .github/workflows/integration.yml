@@ -69,6 +69,12 @@ jobs:
           cd infra
           docker compose exec -T backend python -m pytest -q /app/tests/test_publish_validation.py
 
+      - name: Run analytics mocked unit tests (inside backend container)
+        run: |
+          cd infra
+          # Ensure /app is on PYTHONPATH so tests can import the `backend` package
+          docker compose exec -T backend env PYTHONPATH=/app python -m pytest -q /app/tests/test_analytics_service_mocked.py
+
       - name: Dump logs & diagnostics (always)
         if: always()
         run: |
