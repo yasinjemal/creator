@@ -58,6 +58,11 @@ jobs:
           cd infra
           docker compose exec -T backend python -m pytest -q /app/tests/test_publish_validation.py
 
+      - name: Run analytics mocked unit tests (fast smoke)
+        run: |
+          cd infra
+          docker compose exec -T backend env PYTHONPATH=/app python -m pytest -q /app/tests/test_analytics_service_mocked.py
+
       - name: Dump logs & diagnostics (always)
         if: always()
         run: |
